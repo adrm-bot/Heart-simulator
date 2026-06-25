@@ -13,11 +13,11 @@
     margin:0; background:#05070d; color:var(--cold);
     font-family:"SFMono-Regular",ui-monospace,"Cascadia Code",Consolas,monospace;
     min-height:100vh; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; gap:34px;
-    padding:24px; overflow:hidden;
+    align-items:center; justify-content:center; gap:22px;
+    padding:20px; overflow:hidden;
   }
   #eqwrap{
-    font-size:clamp(.9rem,3.4vw,1.35rem);
+    font-size:clamp(.85rem,3.2vw,1.3rem);
     letter-spacing:.08em; white-space:nowrap;
     transition:color 1.6s ease, opacity 1.2s ease;
     user-select:none; min-height:1.4em;
@@ -28,180 +28,253 @@
     animation:blink 1s steps(1) infinite;
   }
   @keyframes blink{50%{opacity:0;}}
-  #cv{
-    display:block; width:min(86vmin,560px); height:min(86vmin,560px);
-    border-radius:50%;
-    transition:box-shadow 1.4s ease;
-    box-shadow:0 0 0 rgba(0,0,0,0);
+  #stage{
+    position:relative; width:min(86vmin,560px); height:min(86vmin,560px);
   }
+  #stage canvas{
+    position:absolute; inset:0; width:100%; height:100%; border-radius:14px;
+  }
+  #grid{ transition:opacity 1.4s ease; }
+  #plot{ transition:box-shadow 1.4s ease; box-shadow:0 0 0 rgba(0,0,0,0); }
+  #controls{
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    justify-content:center; width:min(86vmin,560px);
+    opacity:0; pointer-events:none; transition:opacity 1.2s ease;
+  }
+  #controls.show{ opacity:1; pointer-events:auto; }
+  .ctl{ display:flex; align-items:center; gap:10px; font-size:.82rem; color:#7f93a8; }
+  input[type="range"]{ width:190px; accent-color:#ff3b5c; }
+  #rval{ color:#ff8aa0; font-weight:700; min-width:96px; }
+  #rval .flood{ font-size:.66rem; color:#ff5c7a; margin-left:6px; letter-spacing:.1em; }
   #replay{
-    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
-    background:none; border:none; color:#3c4a5e; cursor:pointer;
-    font-family:inherit; font-size:.78rem; letter-spacing:.12em;
-    opacity:0; transition:opacity 1.4s ease 0.4s; pointer-events:none;
+    background:none; border:1px solid #2b3a4d; color:#8aa0b6; cursor:pointer;
+    font-family:inherit; font-size:.78rem; letter-spacing:.08em;
+    padding:7px 14px; border-radius:9px; transition:.15s;
   }
-  #replay.show{opacity:.7; pointer-events:auto;}
-  #replay:hover{color:#ff8aa0;}
+  #replay:hover{ border-color:#ff8aa0; color:#ff8aa0; }
 </style>
 </head>
 <body>
   <div id="eqwrap"><span id="eq"></span><span id="cursor"></span></div>
-  <canvas id="cv" width="720" height="720"></canvas>
-  <button id="replay">↻ 다시</button>
+
+  <div id="stage">
+    <canvas id="grid" width="720" height="720"></canvas>
+    <canvas id="plot" width="720" height="720"></canvas>
+  </div>
+
+  <div id="controls">
+    <div class="ctl">
+      <label for="r">r</label>
+      <input type="range" id="r" min="1" max="100" step="1" value="30" />
+      <span id="rval">30</span>
+    </div>
+    <button id="replay">↻ 처음부터</button>
+  </div>
 
 <script>
 (() => {
   "use strict";
 
-  // ---- math constants (shared with the CLI/web version) -------------------
+  // ---- math constants (shared with the CLI version) ----------------------
   const R = 30, OVERFILL = 1.55, EXTENT = 2/Math.sqrt(3);
 
   // cold (steel / ice) -> warm (red / pink) gradients, edge -> centre
   const COLD = [
-    [10,18,30],[18,30,48],[28,46,70],[40,64,92],[58,86,120],
-    [82,116,150],[120,156,186],[165,196,220],[210,232,245]
+    [12,22,36],[20,34,54],[30,52,78],[44,72,102],[64,96,130],
+    [90,126,160],[128,164,194],[172,202,226],[214,234,246]
   ];
   const WARM = [
     [60,0,12],[110,4,24],[150,8,30],[190,16,40],[230,30,60],
     [255,59,92],[255,99,132],[255,140,170],[255,184,205]
   ];
 
-  const cv = document.getElementById("cv");
+  const gridCv = document.getElementById("grid");
+  const gctx = gridCv.getContext("2d");
+  const cv = document.getElementById("plot");
   const ctx = cv.getContext("2d");
   const eqEl = document.getElementById("eq");
   const eqWrap = document.getElementById("eqwrap");
   const cursorEl = document.getElementById("cursor");
+  const controls = document.getElementById("controls");
+  const rSlider = document.getElementById("r");
+  const rValEl = document.getElementById("rval");
   const replayEl = document.getElementById("replay");
 
   const W = cv.width, H = cv.height;
-  const img = ctx.createImageData(W, H);
-  const data = img.data;
   const cx = (W-1)/2, cy = (H-1)/2;
   const scale = OVERFILL * (H/2) / (EXTENT * Math.sqrt(100));
-  const inv = 1/scale, invR = 1/R;
+  const inv = 1/scale;
+  const range = (H/2)/scale;               // visible half-range in math units (~7.5)
 
-  // pre-fill alpha + dark background once
-  for (let i=0;i<data.length;i+=4){ data[i]=5; data[i+1]=7; data[i+2]=13; data[i+3]=255; }
-
+  const pimg = ctx.createImageData(W, H);
+  const pdata = pimg.data;
   const blended = [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];
 
+  // ---- static Cartesian grid (the "cold reason" scaffold) ----------------
+  function drawGrid(){
+    gctx.fillStyle = "#05070d";
+    gctx.fillRect(0,0,W,H);
+    const maxU = Math.floor(range);
+    // minor gridlines every 1 unit
+    gctx.lineWidth = 1;
+    gctx.strokeStyle = "rgba(110,150,185,0.06)";
+    gctx.beginPath();
+    for (let u=-maxU; u<=maxU; u++){
+      const X = cx + u*scale, Y = cy - u*scale;
+      gctx.moveTo(X,0); gctx.lineTo(X,H);
+      gctx.moveTo(0,Y); gctx.lineTo(W,Y);
+    }
+    gctx.stroke();
+    // major gridlines every 5 units
+    gctx.strokeStyle = "rgba(120,160,195,0.16)";
+    gctx.beginPath();
+    for (let u=-maxU; u<=maxU; u++){
+      if (u % 5 !== 0 || u === 0) continue;
+      const X = cx + u*scale, Y = cy - u*scale;
+      gctx.moveTo(X,0); gctx.lineTo(X,H);
+      gctx.moveTo(0,Y); gctx.lineTo(W,Y);
+    }
+    gctx.stroke();
+    // axes
+    gctx.strokeStyle = "rgba(150,190,222,0.55)";
+    gctx.lineWidth = 1.6;
+    gctx.beginPath();
+    gctx.moveTo(0,cy); gctx.lineTo(W,cy);   // x-axis
+    gctx.moveTo(cx,0); gctx.lineTo(cx,H);   // y-axis
+    gctx.stroke();
+    // arrow heads
+    gctx.fillStyle = "rgba(150,190,222,0.7)";
+    gctx.beginPath(); gctx.moveTo(W-2,cy); gctx.lineTo(W-13,cy-6); gctx.lineTo(W-13,cy+6); gctx.fill();
+    gctx.beginPath(); gctx.moveTo(cx,2); gctx.lineTo(cx-6,13); gctx.lineTo(cx+6,13); gctx.fill();
+    // tick labels + axis names
+    gctx.fillStyle = "rgba(140,178,208,0.8)";
+    gctx.font = "13px ui-monospace, monospace";
+    for (let u=-maxU; u<=maxU; u++){
+      if (u % 5 !== 0 || u === 0) continue;
+      const X = cx + u*scale, Y = cy - u*scale;
+      gctx.fillText(String(u), X+4, cy+15);   // x ticks
+      gctx.fillText(String(u), cx+6, Y-4);     // y ticks
+    }
+    gctx.fillStyle = "rgba(160,196,224,0.9)";
+    gctx.font = "italic 15px ui-monospace, monospace";
+    gctx.fillText("x", W-20, cy-8);
+    gctx.fillText("y", cx+10, 18);
+    gctx.fillText("O", cx-16, cy+16);
+  }
+
   function smoothstep(e0,e1,x){
-    let t = (x-e0)/(e1-e0);
-    if (t<0) t=0; else if (t>1) t=1;
-    return t*t*(3-2*t);
+    let t=(x-e0)/(e1-e0); if(t<0)t=0; else if(t>1)t=1; return t*t*(3-2*t);
   }
   const ease = x => x*x*(3-2*x);
-
-  // gentle "lub-dub" once the heart is revealed
   function beat(p){
     return Math.exp(-Math.pow((p-0.12)/0.05,2)) + 0.55*Math.exp(-Math.pow((p-0.30)/0.06,2));
   }
 
+  // ---- plot the inequality region (transparent outside) ------------------
   function draw(a, b, warmth, r){
-    // blend palette once per frame (cold -> warm)
     for (let i=0;i<9;i++){
       const c=COLD[i], w=WARM[i];
       blended[i][0]=c[0]+(w[0]-c[0])*warmth;
       blended[i][1]=c[1]+(w[1]-c[1])*warmth;
       blended[i][2]=c[2]+(w[2]-c[2])*warmth;
     }
-    const rr = r, irr = 1/r;
+    const irr = 1/r;
     for (let py=0; py<H; py++){
-      const y = (cy - py) * inv;
-      const by2 = b*y*y, ay = a*y;
-      let o = py*W*4;
+      const y=(cy-py)*inv, by2=b*y*y, ay=a*y;
+      let o=py*W*4;
       for (let px=0; px<W; px++, o+=4){
-        const x = (px - cx) * inv;
-        const ax = x<0 ? -x : x;
-        const v = x*x - ay*ax + by2;
-        if (v <= rr){
-          let idx = ((rr - v) * irr * 9) | 0;
-          if (idx>8) idx=8; else if (idx<0) idx=0;
-          const col = blended[idx];
-          data[o]=col[0]; data[o+1]=col[1]; data[o+2]=col[2];
+        const x=(px-cx)*inv;
+        const axv = x<0 ? -x : x;
+        const v = x*x - ay*axv + by2;
+        if (v <= r){
+          let idx=((r-v)*irr*9)|0; if(idx>8)idx=8; else if(idx<0)idx=0;
+          const col=blended[idx];
+          pdata[o]=col[0]; pdata[o+1]=col[1]; pdata[o+2]=col[2]; pdata[o+3]=255;
         } else {
-          data[o]=5; data[o+1]=7; data[o+2]=13;
+          pdata[o+3]=0;               // transparent -> grid shows through
         }
       }
     }
-    ctx.putImageData(img, 0, 0);
+    ctx.putImageData(pimg, 0, 0);
   }
 
-  // ---- timeline -----------------------------------------------------------
-  // P1 hold band · P1..P2 band->disk · P2..P3 hold disk · P3..P4 disk->heart
+  // ---- timeline ----------------------------------------------------------
   const P1=0.4, P2=2.0, P3=3.1, P4=5.9;
-  let revealStart = 0, replayShown = false, rafId = 0;
+  let revealStart=0, interactive=false, rafId=0, clock=0;
 
   function frame(now){
-    const t = (now - revealStart)/1000;
-    let a=0, b=0;
-    if (t < P1){ b=0; a=0; }
-    else if (t < P2){ b=ease((t-P1)/(P2-P1)); a=0; }
-    else if (t < P3){ b=1; a=0; }
-    else if (t < P4){ b=1; a=ease((t-P3)/(P4-P3)); }
-    else { b=1; a=1; }
+    const t=(now-revealStart)/1000;
+    clock=now;
+    let a, b, warmth, baseR;
 
-    const warmth = smoothstep(0.18, 0.96, a);
+    if (!interactive){
+      if (t < P1){ b=0; a=0; }
+      else if (t < P2){ b=ease((t-P1)/(P2-P1)); a=0; }
+      else if (t < P3){ b=1; a=0; }
+      else if (t < P4){ b=1; a=ease((t-P3)/(P4-P3)); }
+      else { b=1; a=1; }
+      warmth = smoothstep(0.18,0.96,a);
+      baseR = R;
+      if (t > P4 + 1.0){
+        interactive = true;
+        controls.classList.add("show");
+        rSlider.value = R; rValEl.textContent = R;
+      }
+    } else {
+      a=1; b=1; warmth=1;
+      baseR = +rSlider.value;
+    }
 
-    let r = R;
-    if (t >= P4){
-      const p = ((t - P4) % 1.15) / 1.15;
-      r = R * (1 + 0.055 * beat(p));
+    // gentle heartbeat once warm
+    let r = baseR;
+    if (interactive || t >= P4){
+      const p = ((now/1000) % 1.15) / 1.15;
+      r = baseR * (1 + 0.05 * beat(p));
     }
 
     draw(a, b, warmth, r);
 
-    // the cold "reason" softly recedes as warmth blooms
     eqWrap.style.color = `rgb(${111+144*warmth},${168-40*warmth},${199-20*warmth})`;
-    eqWrap.style.opacity = (1 - 0.62*warmth).toFixed(3);
+    eqWrap.style.opacity = (1 - 0.55*warmth).toFixed(3);
+    gridCv.style.opacity = (1 - 0.45*warmth).toFixed(3);
+    const glow = 70*warmth;
+    cv.style.boxShadow = `0 0 ${glow}px ${glow*0.4}px rgba(255,70,110,${0.5*warmth})`;
 
-    // warm halo around the canvas
-    const glow = 70 * warmth;
-    cv.style.boxShadow = `0 0 ${glow}px ${glow*0.45}px rgba(255,70,110,${0.55*warmth})`;
-
-    if (t > P4 + 1.0 && !replayShown){
-      replayShown = true;
-      replayEl.classList.add("show");
-    }
     rafId = requestAnimationFrame(frame);
   }
 
-  // ---- equation typing ----------------------------------------------------
+  // ---- equation typing ---------------------------------------------------
   const EQ = "x² − a·|x|·y + b·y² − r ≤ 0";
-  let typed = 0, typeTimer = 0;
-
+  let typed=0, typeTimer=0;
   function type(){
     eqEl.textContent = EQ.slice(0, typed);
-    if (typed < EQ.length){ typed++; typeTimer = setTimeout(type, 62); }
-    else { typeTimer = setTimeout(startReveal, 800); }
+    if (typed < EQ.length){ typed++; typeTimer=setTimeout(type, 62); }
+    else { typeTimer=setTimeout(startReveal, 800); }
   }
-
   function startReveal(){
-    cursorEl.style.display = "none";
-    revealStart = performance.now();
-    rafId = requestAnimationFrame(frame);
+    cursorEl.style.display="none";
+    revealStart=performance.now();
+    rafId=requestAnimationFrame(frame);
   }
-
   function reset(){
-    cancelAnimationFrame(rafId);
-    clearTimeout(typeTimer);
-    replayShown = false;
-    replayEl.classList.remove("show");
-    cursorEl.style.display = "";
-    cv.style.boxShadow = "0 0 0 rgba(0,0,0,0)";
-    eqWrap.style.color = "";
-    eqWrap.style.opacity = "1";
-    // clear canvas to dark
-    for (let i=0;i<data.length;i+=4){ data[i]=5; data[i+1]=7; data[i+2]=13; }
-    ctx.putImageData(img, 0, 0);
-    typed = 0;
-    typeTimer = setTimeout(type, 500);
+    cancelAnimationFrame(rafId); clearTimeout(typeTimer);
+    interactive=false; controls.classList.remove("show");
+    cursorEl.style.display=""; cv.style.boxShadow="0 0 0 rgba(0,0,0,0)";
+    gridCv.style.opacity="1"; eqWrap.style.color=""; eqWrap.style.opacity="1";
+    // clear plot
+    for (let i=3;i<pdata.length;i+=4) pdata[i]=0;
+    ctx.putImageData(pimg,0,0);
+    typed=0; typeTimer=setTimeout(type, 450);
   }
 
+  rSlider.addEventListener("input", () => {
+    rValEl.innerHTML = rSlider.value + (rSlider.value>=100 ? ' <span class="flood">FLOODED</span>' : '');
+  });
   replayEl.addEventListener("click", reset);
 
   // go
-  ctx.putImageData(img, 0, 0);
+  drawGrid();
+  ctx.putImageData(pimg, 0, 0);
   typeTimer = setTimeout(type, 700);
 })();
 </script>
