@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>수학적 하트 그래프 시뮬레이터</title>
+<style>
+  :root{
+    --bg:#0b0d17; --panel:#151829; --accent:#ff3b5c;
+    --text:#e8eaf2; --muted:#8a90a8; --line:#232742;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    background:radial-gradient(circle at 50% -10%, #1a1d33, var(--bg));
+    color:var(--text); min-height:100vh;
+    display:flex; flex-direction:column; align-items:center;
+    padding:24px 16px 40px;
+  }
+  h1{font-size:1.4rem; margin:0 0 4px; letter-spacing:.5px;}
+  .subtitle{color:var(--muted); font-size:.85rem; margin-bottom:8px; text-align:center;}
+  code.eq{
+    display:inline-block; background:#11142400; color:#ffb8c4;
+    font-size:.9rem; margin-bottom:18px;
+  }
+  .wrap{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:18px; padding:18px; box-shadow:0 16px 50px rgba(0,0,0,.4);
+    width:100%; max-width:560px;
+  }
+  canvas{display:block; width:100%; border-radius:12px; background:#07090f;}
+  .controls{margin-top:16px; display:flex; flex-direction:column; gap:14px;}
+  .row{display:flex; align-items:center; gap:12px;}
+  .row label{font-size:.85rem; color:var(--muted); min-width:84px;}
+  input[type="range"]{flex:1; accent-color:var(--accent);}
+  .rval{font-variant-numeric:tabular-nums; font-weight:700; color:var(--accent); min-width:118px; text-align:right;}
+  .rval .flood{color:#ff8aa0; font-size:.7rem; font-weight:600; margin-left:6px;}
+  .btns{display:flex; gap:10px; flex-wrap:wrap;}
+  button{
+    flex:1; min-width:120px; padding:11px; border:1px solid #2c3150;
+    background:#1b1f33; color:var(--text); border-radius:11px;
+    cursor:pointer; font-size:.88rem; font-weight:600; transition:.15s;
+  }
+  button:hover{border-color:var(--accent);}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .stage-pill{
+    font-size:.72rem; color:var(--muted); text-align:center;
+    background:#1b1f33; border-radius:999px; padding:5px 12px; align-self:center;
+  }
+  .footnote{color:var(--muted); font-size:.72rem; margin-top:20px; text-align:center; max-width:560px;}
+</style>
+</head>
+<body>
+  <h1>❤️ 수학적 하트 그래프 시뮬레이터</h1>
+  <div class="subtitle">하나의 부등식이 하트가 되는 과정</div>
+  <code class="eq">x² − a·|x|·y + b·y² − r ≤ 0</code>
+
+  <div class="wrap">
+    <canvas id="cv" width="1040" height="1040"></canvas>
+    <div class="controls">
+      <div class="stage-pill" id="stage">하트 (a=1, b=1)</div>
+      <div class="row">
+        <label>크기 r</label>
+        <input type="range" id="r" min="1" max="100" step="1" value="30" />
+        <div class="rval"><span id="rval">30</span><span id="flood"></span></div>
+      </div>
+      <div class="btns">
+        <button class="primary" id="build">▶ 빌드업 재생</button>
+        <button id="reset">⟲ 리셋</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    |x| 항이 y축 대칭과 상단 굴곡(cusp)·하단 꼭짓점을 만듭니다.
+    빌드업: b를 0→1 (수직 띠 → 원반), 이어 a를 0→1 (원반 → 하트).
+    색은 내부 깊이에 따른 빨강→핑크 그라데이션.
+  </div>
+
+<script>
+(() => {
+  "use strict";
+  const R_MIN=1, R_MAX=100, R_DEFAULT=30, OVERFILL=1.55;
+  const EXTENT = 2/Math.sqrt(3);                 // ≈1.1547
+  // dark-red -> pink (rgb stops mirroring the CLI 256-colour palette)
+  const PALETTE = [
+    [60,0,12],[110,4,24],[150,8,30],[190,16,40],
+    [230,30,60],[255,59,92],[255,99,132],[255,140,170],[255,184,205]
+  ];
+
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const rSlider = document.getElementById("r");
+  const rValEl = document.getElementById("rval");
+  const floodEl = document.getElementById("flood");
+  const stageEl = document.getElementById("stage");
+  const buildBtn = document.getElementById("build");
+  const resetBtn = document.getElementById("reset");
+
+  let r = R_DEFAULT;
+  let a = 1, b = 1;
+  let building = false, t = 0, lastTs = 0;
+  const BUILD_SEC_PER_PHASE = 1.2;
+
+  function scaleFor(half){
+    // pixels per math unit, fixed so r=R_MAX overfills by OVERFILL.
+    return OVERFILL * half / (EXTENT * Math.sqrt(R_MAX));
+  }
+
+  function colorFor(depth){ // depth 0..1, edge..centre
+    let idx = Math.floor(depth * PALETTE.length);
+    if (idx >= PALETTE.length) idx = PALETTE.length - 1;
+    if (idx < 0) idx = 0;
+    return PALETTE[idx];
+  }
+
+  function draw(){
+    const W = cv.width, H = cv.height;
+    const img = ctx.createImageData(W, H);
+    const data = img.data;
+    const cx = (W-1)/2, cy = (H-1)/2;
+    const half = H/2;
+    const s = scaleFor(half);
+    const inv = 1/s, invR = r>0 ? 1/r : 1;
+
+    for (let py=0; py<H; py++){
+      const y = (cy - py) * inv;
+      const y2 = y*y, by2 = b*y2, ay = a*y;
+      let rowoff = py*W*4;
+      for (let px=0; px<W; px++){
+        const x = (px - cx) * inv;
+        const ax = x<0 ? -x : x;
+        const v = x*x - ay*ax + by2;
+        const o = rowoff + px*4;
+        if (v <= r){
+          const depth = (r - v) * invR;
+          const col = colorFor(depth);
+          data[o] = col[0]; data[o+1] = col[1]; data[o+2] = col[2]; data[o+3] = 255;
+        } else {
+          data[o]=7; data[o+1]=9; data[o+2]=15; data[o+3]=255;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  function setStage(){
+    let txt;
+    if (building){
+      if (t < 1) txt = `빌드업: 띠 → 원반 (b=${b.toFixed(2)}, a=0)`;
+      else       txt = `빌드업: 원반 → 하트 (a=${a.toFixed(2)}, b=1)`;
+    } else {
+      txt = "하트 (a=1, b=1)";
+    }
+    stageEl.textContent = txt;
+  }
+
+  function updateReadout(){
+    rValEl.textContent = Math.round(r);
+    floodEl.textContent = r >= R_MAX ? "FLOODED" : "";
+    floodEl.className = r >= R_MAX ? "flood" : "";
+  }
+
+  function frame(ts){
+    if (!lastTs) lastTs = ts;
+    const dt = (ts - lastTs)/1000; lastTs = ts;
+    if (building){
+      t += dt / BUILD_SEC_PER_PHASE;
+      if (t >= 2){ t = 2; building = false; buildBtn.textContent = "▶ 빌드업 재생"; }
+      b = Math.min(1, t);
+      a = t < 1 ? 0 : Math.min(1, t - 1);
+      setStage();
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  rSlider.addEventListener("input", e => { r = +e.target.value; updateReadout(); });
+  buildBtn.addEventListener("click", () => {
+    building = true; t = 0; a = 0; b = 0;
+    buildBtn.textContent = "● 재생 중…"; setStage();
+  });
+  resetBtn.addEventListener("click", () => {
+    building = false; t = 2; a = 1; b = 1; r = R_DEFAULT;
+    rSlider.value = R_DEFAULT; buildBtn.textContent = "▶ 빌드업 재생";
+    updateReadout(); setStage();
+  });
+
+  updateReadout(); setStage();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
