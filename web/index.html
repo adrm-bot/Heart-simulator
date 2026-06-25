@@ -3,191 +3,206 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>수학적 하트 그래프 시뮬레이터</title>
+<!-- 제목에 'heart' 노출 금지 — 깜짝 효과 보존 -->
+<title>x² − a·|x|·y + b·y² − r ≤ 0</title>
 <style>
-  :root{
-    --bg:#0b0d17; --panel:#151829; --accent:#ff3b5c;
-    --text:#e8eaf2; --muted:#8a90a8; --line:#232742;
-  }
+  :root{ --cold:#6fa8c7; }
   *{box-sizing:border-box;}
+  html,body{height:100%;}
   body{
-    margin:0; font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
-    background:radial-gradient(circle at 50% -10%, #1a1d33, var(--bg));
-    color:var(--text); min-height:100vh;
-    display:flex; flex-direction:column; align-items:center;
-    padding:24px 16px 40px;
+    margin:0; background:#05070d; color:var(--cold);
+    font-family:"SFMono-Regular",ui-monospace,"Cascadia Code",Consolas,monospace;
+    min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:34px;
+    padding:24px; overflow:hidden;
   }
-  h1{font-size:1.4rem; margin:0 0 4px; letter-spacing:.5px;}
-  .subtitle{color:var(--muted); font-size:.85rem; margin-bottom:8px; text-align:center;}
-  code.eq{
-    display:inline-block; background:#11142400; color:#ffb8c4;
-    font-size:.9rem; margin-bottom:18px;
+  #eqwrap{
+    font-size:clamp(.9rem,3.4vw,1.35rem);
+    letter-spacing:.08em; white-space:nowrap;
+    transition:color 1.6s ease, opacity 1.2s ease;
+    user-select:none; min-height:1.4em;
   }
-  .wrap{
-    background:var(--panel); border:1px solid var(--line);
-    border-radius:18px; padding:18px; box-shadow:0 16px 50px rgba(0,0,0,.4);
-    width:100%; max-width:560px;
+  #cursor{
+    display:inline-block; width:.55em; height:1.05em; margin-left:.06em;
+    background:currentColor; vertical-align:-0.18em;
+    animation:blink 1s steps(1) infinite;
   }
-  canvas{display:block; width:100%; border-radius:12px; background:#07090f;}
-  .controls{margin-top:16px; display:flex; flex-direction:column; gap:14px;}
-  .row{display:flex; align-items:center; gap:12px;}
-  .row label{font-size:.85rem; color:var(--muted); min-width:84px;}
-  input[type="range"]{flex:1; accent-color:var(--accent);}
-  .rval{font-variant-numeric:tabular-nums; font-weight:700; color:var(--accent); min-width:118px; text-align:right;}
-  .rval .flood{color:#ff8aa0; font-size:.7rem; font-weight:600; margin-left:6px;}
-  .btns{display:flex; gap:10px; flex-wrap:wrap;}
-  button{
-    flex:1; min-width:120px; padding:11px; border:1px solid #2c3150;
-    background:#1b1f33; color:var(--text); border-radius:11px;
-    cursor:pointer; font-size:.88rem; font-weight:600; transition:.15s;
+  @keyframes blink{50%{opacity:0;}}
+  #cv{
+    display:block; width:min(86vmin,560px); height:min(86vmin,560px);
+    border-radius:50%;
+    transition:box-shadow 1.4s ease;
+    box-shadow:0 0 0 rgba(0,0,0,0);
   }
-  button:hover{border-color:var(--accent);}
-  button.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
-  .stage-pill{
-    font-size:.72rem; color:var(--muted); text-align:center;
-    background:#1b1f33; border-radius:999px; padding:5px 12px; align-self:center;
+  #replay{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:none; border:none; color:#3c4a5e; cursor:pointer;
+    font-family:inherit; font-size:.78rem; letter-spacing:.12em;
+    opacity:0; transition:opacity 1.4s ease 0.4s; pointer-events:none;
   }
-  .footnote{color:var(--muted); font-size:.72rem; margin-top:20px; text-align:center; max-width:560px;}
+  #replay.show{opacity:.7; pointer-events:auto;}
+  #replay:hover{color:#ff8aa0;}
 </style>
 </head>
 <body>
-  <h1>❤️ 수학적 하트 그래프 시뮬레이터</h1>
-  <div class="subtitle">하나의 부등식이 하트가 되는 과정</div>
-  <code class="eq">x² − a·|x|·y + b·y² − r ≤ 0</code>
-
-  <div class="wrap">
-    <canvas id="cv" width="1040" height="1040"></canvas>
-    <div class="controls">
-      <div class="stage-pill" id="stage">하트 (a=1, b=1)</div>
-      <div class="row">
-        <label>크기 r</label>
-        <input type="range" id="r" min="1" max="100" step="1" value="30" />
-        <div class="rval"><span id="rval">30</span><span id="flood"></span></div>
-      </div>
-      <div class="btns">
-        <button class="primary" id="build">▶ 빌드업 재생</button>
-        <button id="reset">⟲ 리셋</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="footnote">
-    |x| 항이 y축 대칭과 상단 굴곡(cusp)·하단 꼭짓점을 만듭니다.
-    빌드업: b를 0→1 (수직 띠 → 원반), 이어 a를 0→1 (원반 → 하트).
-    색은 내부 깊이에 따른 빨강→핑크 그라데이션.
-  </div>
+  <div id="eqwrap"><span id="eq"></span><span id="cursor"></span></div>
+  <canvas id="cv" width="720" height="720"></canvas>
+  <button id="replay">↻ 다시</button>
 
 <script>
 (() => {
   "use strict";
-  const R_MIN=1, R_MAX=100, R_DEFAULT=30, OVERFILL=1.55;
-  const EXTENT = 2/Math.sqrt(3);                 // ≈1.1547
-  // dark-red -> pink (rgb stops mirroring the CLI 256-colour palette)
-  const PALETTE = [
-    [60,0,12],[110,4,24],[150,8,30],[190,16,40],
-    [230,30,60],[255,59,92],[255,99,132],[255,140,170],[255,184,205]
+
+  // ---- math constants (shared with the CLI/web version) -------------------
+  const R = 30, OVERFILL = 1.55, EXTENT = 2/Math.sqrt(3);
+
+  // cold (steel / ice) -> warm (red / pink) gradients, edge -> centre
+  const COLD = [
+    [10,18,30],[18,30,48],[28,46,70],[40,64,92],[58,86,120],
+    [82,116,150],[120,156,186],[165,196,220],[210,232,245]
+  ];
+  const WARM = [
+    [60,0,12],[110,4,24],[150,8,30],[190,16,40],[230,30,60],
+    [255,59,92],[255,99,132],[255,140,170],[255,184,205]
   ];
 
   const cv = document.getElementById("cv");
   const ctx = cv.getContext("2d");
-  const rSlider = document.getElementById("r");
-  const rValEl = document.getElementById("rval");
-  const floodEl = document.getElementById("flood");
-  const stageEl = document.getElementById("stage");
-  const buildBtn = document.getElementById("build");
-  const resetBtn = document.getElementById("reset");
+  const eqEl = document.getElementById("eq");
+  const eqWrap = document.getElementById("eqwrap");
+  const cursorEl = document.getElementById("cursor");
+  const replayEl = document.getElementById("replay");
 
-  let r = R_DEFAULT;
-  let a = 1, b = 1;
-  let building = false, t = 0, lastTs = 0;
-  const BUILD_SEC_PER_PHASE = 1.2;
+  const W = cv.width, H = cv.height;
+  const img = ctx.createImageData(W, H);
+  const data = img.data;
+  const cx = (W-1)/2, cy = (H-1)/2;
+  const scale = OVERFILL * (H/2) / (EXTENT * Math.sqrt(100));
+  const inv = 1/scale, invR = 1/R;
 
-  function scaleFor(half){
-    // pixels per math unit, fixed so r=R_MAX overfills by OVERFILL.
-    return OVERFILL * half / (EXTENT * Math.sqrt(R_MAX));
+  // pre-fill alpha + dark background once
+  for (let i=0;i<data.length;i+=4){ data[i]=5; data[i+1]=7; data[i+2]=13; data[i+3]=255; }
+
+  const blended = [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];
+
+  function smoothstep(e0,e1,x){
+    let t = (x-e0)/(e1-e0);
+    if (t<0) t=0; else if (t>1) t=1;
+    return t*t*(3-2*t);
+  }
+  const ease = x => x*x*(3-2*x);
+
+  // gentle "lub-dub" once the heart is revealed
+  function beat(p){
+    return Math.exp(-Math.pow((p-0.12)/0.05,2)) + 0.55*Math.exp(-Math.pow((p-0.30)/0.06,2));
   }
 
-  function colorFor(depth){ // depth 0..1, edge..centre
-    let idx = Math.floor(depth * PALETTE.length);
-    if (idx >= PALETTE.length) idx = PALETTE.length - 1;
-    if (idx < 0) idx = 0;
-    return PALETTE[idx];
-  }
-
-  function draw(){
-    const W = cv.width, H = cv.height;
-    const img = ctx.createImageData(W, H);
-    const data = img.data;
-    const cx = (W-1)/2, cy = (H-1)/2;
-    const half = H/2;
-    const s = scaleFor(half);
-    const inv = 1/s, invR = r>0 ? 1/r : 1;
-
+  function draw(a, b, warmth, r){
+    // blend palette once per frame (cold -> warm)
+    for (let i=0;i<9;i++){
+      const c=COLD[i], w=WARM[i];
+      blended[i][0]=c[0]+(w[0]-c[0])*warmth;
+      blended[i][1]=c[1]+(w[1]-c[1])*warmth;
+      blended[i][2]=c[2]+(w[2]-c[2])*warmth;
+    }
+    const rr = r, irr = 1/r;
     for (let py=0; py<H; py++){
       const y = (cy - py) * inv;
-      const y2 = y*y, by2 = b*y2, ay = a*y;
-      let rowoff = py*W*4;
-      for (let px=0; px<W; px++){
+      const by2 = b*y*y, ay = a*y;
+      let o = py*W*4;
+      for (let px=0; px<W; px++, o+=4){
         const x = (px - cx) * inv;
         const ax = x<0 ? -x : x;
         const v = x*x - ay*ax + by2;
-        const o = rowoff + px*4;
-        if (v <= r){
-          const depth = (r - v) * invR;
-          const col = colorFor(depth);
-          data[o] = col[0]; data[o+1] = col[1]; data[o+2] = col[2]; data[o+3] = 255;
+        if (v <= rr){
+          let idx = ((rr - v) * irr * 9) | 0;
+          if (idx>8) idx=8; else if (idx<0) idx=0;
+          const col = blended[idx];
+          data[o]=col[0]; data[o+1]=col[1]; data[o+2]=col[2];
         } else {
-          data[o]=7; data[o+1]=9; data[o+2]=15; data[o+3]=255;
+          data[o]=5; data[o+1]=7; data[o+2]=13;
         }
       }
     }
     ctx.putImageData(img, 0, 0);
   }
 
-  function setStage(){
-    let txt;
-    if (building){
-      if (t < 1) txt = `빌드업: 띠 → 원반 (b=${b.toFixed(2)}, a=0)`;
-      else       txt = `빌드업: 원반 → 하트 (a=${a.toFixed(2)}, b=1)`;
-    } else {
-      txt = "하트 (a=1, b=1)";
+  // ---- timeline -----------------------------------------------------------
+  // P1 hold band · P1..P2 band->disk · P2..P3 hold disk · P3..P4 disk->heart
+  const P1=0.4, P2=2.0, P3=3.1, P4=5.9;
+  let revealStart = 0, replayShown = false, rafId = 0;
+
+  function frame(now){
+    const t = (now - revealStart)/1000;
+    let a=0, b=0;
+    if (t < P1){ b=0; a=0; }
+    else if (t < P2){ b=ease((t-P1)/(P2-P1)); a=0; }
+    else if (t < P3){ b=1; a=0; }
+    else if (t < P4){ b=1; a=ease((t-P3)/(P4-P3)); }
+    else { b=1; a=1; }
+
+    const warmth = smoothstep(0.18, 0.96, a);
+
+    let r = R;
+    if (t >= P4){
+      const p = ((t - P4) % 1.15) / 1.15;
+      r = R * (1 + 0.055 * beat(p));
     }
-    stageEl.textContent = txt;
-  }
 
-  function updateReadout(){
-    rValEl.textContent = Math.round(r);
-    floodEl.textContent = r >= R_MAX ? "FLOODED" : "";
-    floodEl.className = r >= R_MAX ? "flood" : "";
-  }
+    draw(a, b, warmth, r);
 
-  function frame(ts){
-    if (!lastTs) lastTs = ts;
-    const dt = (ts - lastTs)/1000; lastTs = ts;
-    if (building){
-      t += dt / BUILD_SEC_PER_PHASE;
-      if (t >= 2){ t = 2; building = false; buildBtn.textContent = "▶ 빌드업 재생"; }
-      b = Math.min(1, t);
-      a = t < 1 ? 0 : Math.min(1, t - 1);
-      setStage();
+    // the cold "reason" softly recedes as warmth blooms
+    eqWrap.style.color = `rgb(${111+144*warmth},${168-40*warmth},${199-20*warmth})`;
+    eqWrap.style.opacity = (1 - 0.62*warmth).toFixed(3);
+
+    // warm halo around the canvas
+    const glow = 70 * warmth;
+    cv.style.boxShadow = `0 0 ${glow}px ${glow*0.45}px rgba(255,70,110,${0.55*warmth})`;
+
+    if (t > P4 + 1.0 && !replayShown){
+      replayShown = true;
+      replayEl.classList.add("show");
     }
-    draw();
-    requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);
   }
 
-  rSlider.addEventListener("input", e => { r = +e.target.value; updateReadout(); });
-  buildBtn.addEventListener("click", () => {
-    building = true; t = 0; a = 0; b = 0;
-    buildBtn.textContent = "● 재생 중…"; setStage();
-  });
-  resetBtn.addEventListener("click", () => {
-    building = false; t = 2; a = 1; b = 1; r = R_DEFAULT;
-    rSlider.value = R_DEFAULT; buildBtn.textContent = "▶ 빌드업 재생";
-    updateReadout(); setStage();
-  });
+  // ---- equation typing ----------------------------------------------------
+  const EQ = "x² − a·|x|·y + b·y² − r ≤ 0";
+  let typed = 0, typeTimer = 0;
 
-  updateReadout(); setStage();
-  requestAnimationFrame(frame);
+  function type(){
+    eqEl.textContent = EQ.slice(0, typed);
+    if (typed < EQ.length){ typed++; typeTimer = setTimeout(type, 62); }
+    else { typeTimer = setTimeout(startReveal, 800); }
+  }
+
+  function startReveal(){
+    cursorEl.style.display = "none";
+    revealStart = performance.now();
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function reset(){
+    cancelAnimationFrame(rafId);
+    clearTimeout(typeTimer);
+    replayShown = false;
+    replayEl.classList.remove("show");
+    cursorEl.style.display = "";
+    cv.style.boxShadow = "0 0 0 rgba(0,0,0,0)";
+    eqWrap.style.color = "";
+    eqWrap.style.opacity = "1";
+    // clear canvas to dark
+    for (let i=0;i<data.length;i+=4){ data[i]=5; data[i+1]=7; data[i+2]=13; }
+    ctx.putImageData(img, 0, 0);
+    typed = 0;
+    typeTimer = setTimeout(type, 500);
+  }
+
+  replayEl.addEventListener("click", reset);
+
+  // go
+  ctx.putImageData(img, 0, 0);
+  typeTimer = setTimeout(type, 700);
 })();
 </script>
 </body>
