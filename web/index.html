@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <!-- 제목에 'heart' 노출 금지 — 깜짝 효과 보존 -->
-<title>x² − a·|x|·y + b·y² − r ≤ 0</title>
+<title>x² − |x|·y + y² = r</title>
 <style>
   :root{ --cold:#6fa8c7; }
   *{box-sizing:border-box;}
@@ -28,18 +28,12 @@
     animation:blink 1s steps(1) infinite;
   }
   @keyframes blink{50%{opacity:0;}}
-  #stage{
-    position:relative; width:min(86vmin,560px); height:min(86vmin,560px);
-  }
-  #stage canvas{
-    position:absolute; inset:0; width:100%; height:100%; border-radius:14px;
-  }
+  #stage{ position:relative; width:min(86vmin,560px); height:min(86vmin,560px); }
+  #stage canvas{ position:absolute; inset:0; width:100%; height:100%; border-radius:14px; }
   #grid{ transition:opacity 1.4s ease; }
-  #plot{ transition:box-shadow 1.4s ease; box-shadow:0 0 0 rgba(0,0,0,0); }
   #controls{
-    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
-    justify-content:center; width:min(86vmin,560px);
-    opacity:0; pointer-events:none; transition:opacity 1.2s ease;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap; justify-content:center;
+    width:min(86vmin,560px); opacity:0; pointer-events:none; transition:opacity 1.2s ease;
   }
   #controls.show{ opacity:1; pointer-events:auto; }
   .ctl{ display:flex; align-items:center; gap:10px; font-size:.82rem; color:#7f93a8; }
@@ -75,18 +69,10 @@
 (() => {
   "use strict";
 
-  // ---- math constants (shared with the CLI version) ----------------------
-  const R = 30, OVERFILL = 1.55, EXTENT = 2/Math.sqrt(3);
-
-  // cold (steel / ice) -> warm (red / pink) gradients, edge -> centre
-  const COLD = [
-    [12,22,36],[20,34,54],[30,52,78],[44,72,102],[64,96,130],
-    [90,126,160],[128,164,194],[172,202,226],[214,234,246]
-  ];
-  const WARM = [
-    [60,0,12],[110,4,24],[150,8,30],[190,16,40],[230,30,60],
-    [255,59,92],[255,99,132],[255,140,170],[255,184,205]
-  ];
+  const R = 30;                       // size parameter (curve x² − |x|y + y² = r)
+  const N = 900;                      // trace resolution
+  const TH0 = -Math.PI/2;             // start at the bottom tip
+  const TRACE = 3.6, WARM = 1.25;     // seconds: draw the curve, then warm it
 
   const gridCv = document.getElementById("grid");
   const gctx = gridCv.getContext("2d");
@@ -102,169 +88,124 @@
 
   const W = cv.width, H = cv.height;
   const cx = (W-1)/2, cy = (H-1)/2;
-  const scale = OVERFILL * (H/2) / (EXTENT * Math.sqrt(100));
-  const inv = 1/scale;
-  const range = (H/2)/scale;               // visible half-range in math units (~7.5)
 
-  const pimg = ctx.createImageData(W, H);
-  const pdata = pimg.data;
-  const blended = [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];
+  // ρ(θ): boundary radius in direction θ (curve is star-shaped about origin)
+  function rho(th, r){ return Math.sqrt(r / (1 - Math.abs(Math.cos(th))*Math.sin(th))); }
 
-  // ---- static Cartesian grid (the "cold reason" scaffold) ----------------
-  function drawGrid(){
-    gctx.fillStyle = "#05070d";
-    gctx.fillRect(0,0,W,H);
-    const maxU = Math.floor(range);
-    // minor gridlines every 1 unit
-    gctx.lineWidth = 1;
-    gctx.strokeStyle = "rgba(110,150,185,0.06)";
-    gctx.beginPath();
-    for (let u=-maxU; u<=maxU; u++){
-      const X = cx + u*scale, Y = cy - u*scale;
-      gctx.moveTo(X,0); gctx.lineTo(X,H);
-      gctx.moveTo(0,Y); gctx.lineTo(W,Y);
+  // fixed scale: r=30 fits ~62% of the half-canvas, leaving room to "flood"
+  function maxExtent(r){
+    let m=0;
+    for (let i=0;i<2400;i++){
+      const th=2*Math.PI*i/2400, rr=rho(th,r);
+      const ax=Math.abs(rr*Math.cos(th)), ay=Math.abs(rr*Math.sin(th));
+      if (ax>m) m=ax; if (ay>m) m=ay;
     }
-    gctx.stroke();
-    // major gridlines every 5 units
-    gctx.strokeStyle = "rgba(120,160,195,0.16)";
-    gctx.beginPath();
-    for (let u=-maxU; u<=maxU; u++){
-      if (u % 5 !== 0 || u === 0) continue;
-      const X = cx + u*scale, Y = cy - u*scale;
-      gctx.moveTo(X,0); gctx.lineTo(X,H);
-      gctx.moveTo(0,Y); gctx.lineTo(W,Y);
-    }
-    gctx.stroke();
-    // axes
-    gctx.strokeStyle = "rgba(150,190,222,0.55)";
-    gctx.lineWidth = 1.6;
-    gctx.beginPath();
-    gctx.moveTo(0,cy); gctx.lineTo(W,cy);   // x-axis
-    gctx.moveTo(cx,0); gctx.lineTo(cx,H);   // y-axis
-    gctx.stroke();
-    // arrow heads
-    gctx.fillStyle = "rgba(150,190,222,0.7)";
-    gctx.beginPath(); gctx.moveTo(W-2,cy); gctx.lineTo(W-13,cy-6); gctx.lineTo(W-13,cy+6); gctx.fill();
-    gctx.beginPath(); gctx.moveTo(cx,2); gctx.lineTo(cx-6,13); gctx.lineTo(cx+6,13); gctx.fill();
-    // tick labels + axis names
-    gctx.fillStyle = "rgba(140,178,208,0.8)";
-    gctx.font = "13px ui-monospace, monospace";
-    for (let u=-maxU; u<=maxU; u++){
-      if (u % 5 !== 0 || u === 0) continue;
-      const X = cx + u*scale, Y = cy - u*scale;
-      gctx.fillText(String(u), X+4, cy+15);   // x ticks
-      gctx.fillText(String(u), cx+6, Y-4);     // y ticks
-    }
-    gctx.fillStyle = "rgba(160,196,224,0.9)";
-    gctx.font = "italic 15px ui-monospace, monospace";
-    gctx.fillText("x", W-20, cy-8);
-    gctx.fillText("y", cx+10, 18);
-    gctx.fillText("O", cx-16, cy+16);
+    return m;
   }
+  const scale = 0.62 * (H/2) / maxExtent(R);
+  const range = (H/2)/scale;
 
-  function smoothstep(e0,e1,x){
-    let t=(x-e0)/(e1-e0); if(t<0)t=0; else if(t>1)t=1; return t*t*(3-2*t);
-  }
+  function smoothstep(e0,e1,x){ let t=(x-e0)/(e1-e0); if(t<0)t=0; else if(t>1)t=1; return t*t*(3-2*t); }
   const ease = x => x*x*(3-2*x);
-  function beat(p){
-    return Math.exp(-Math.pow((p-0.12)/0.05,2)) + 0.55*Math.exp(-Math.pow((p-0.30)/0.06,2));
+  function beat(p){ return Math.exp(-Math.pow((p-0.12)/0.05,2)) + 0.55*Math.exp(-Math.pow((p-0.30)/0.06,2)); }
+
+  // ---- static Cartesian grid (the cold "reason" scaffold) ----------------
+  function drawGrid(){
+    gctx.fillStyle="#05070d"; gctx.fillRect(0,0,W,H);
+    const maxU=Math.floor(range);
+    gctx.lineWidth=1; gctx.strokeStyle="rgba(110,150,185,0.06)"; gctx.beginPath();
+    for (let u=-maxU;u<=maxU;u++){ const X=cx+u*scale,Y=cy-u*scale;
+      gctx.moveTo(X,0);gctx.lineTo(X,H); gctx.moveTo(0,Y);gctx.lineTo(W,Y); }
+    gctx.stroke();
+    gctx.strokeStyle="rgba(120,160,195,0.16)"; gctx.beginPath();
+    for (let u=-maxU;u<=maxU;u++){ if(u%5||u===0)continue; const X=cx+u*scale,Y=cy-u*scale;
+      gctx.moveTo(X,0);gctx.lineTo(X,H); gctx.moveTo(0,Y);gctx.lineTo(W,Y); }
+    gctx.stroke();
+    gctx.strokeStyle="rgba(150,190,222,0.55)"; gctx.lineWidth=1.6; gctx.beginPath();
+    gctx.moveTo(0,cy);gctx.lineTo(W,cy); gctx.moveTo(cx,0);gctx.lineTo(cx,H); gctx.stroke();
+    gctx.fillStyle="rgba(150,190,222,0.7)";
+    gctx.beginPath();gctx.moveTo(W-2,cy);gctx.lineTo(W-13,cy-6);gctx.lineTo(W-13,cy+6);gctx.fill();
+    gctx.beginPath();gctx.moveTo(cx,2);gctx.lineTo(cx-6,13);gctx.lineTo(cx+6,13);gctx.fill();
+    gctx.fillStyle="rgba(140,178,208,0.8)"; gctx.font="13px ui-monospace, monospace";
+    for (let u=-maxU;u<=maxU;u++){ if(u%5||u===0)continue; const X=cx+u*scale,Y=cy-u*scale;
+      gctx.fillText(String(u),X+4,cy+15); gctx.fillText(String(u),cx+6,Y-4); }
+    gctx.fillStyle="rgba(160,196,224,0.9)"; gctx.font="italic 15px ui-monospace, monospace";
+    gctx.fillText("x",W-20,cy-8); gctx.fillText("y",cx+10,18); gctx.fillText("O",cx-16,cy+16);
   }
 
-  // ---- plot the inequality region (transparent outside) ------------------
-  function draw(a, b, warmth, r){
-    for (let i=0;i<9;i++){
-      const c=COLD[i], w=WARM[i];
-      blended[i][0]=c[0]+(w[0]-c[0])*warmth;
-      blended[i][1]=c[1]+(w[1]-c[1])*warmth;
-      blended[i][2]=c[2]+(w[2]-c[2])*warmth;
+  // ---- trace the curve as a line (no fill) -------------------------------
+  function drawCurve(progress, warmth, r){
+    ctx.clearRect(0,0,W,H);
+    const last = Math.max(1, Math.floor(N*progress));
+    const cold=[120,170,210], warm=[255,72,110];
+    const col=[0,1,2].map(i=>Math.round(cold[i]+(warm[i]-cold[i])*warmth));
+    ctx.lineJoin="round"; ctx.lineCap="round";
+    ctx.lineWidth = 3.0 + 0.8*warmth;
+    ctx.strokeStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.shadowBlur = 4 + 26*warmth;
+    ctx.shadowColor = `rgba(255,80,120,${0.25 + 0.75*warmth})`;
+    ctx.beginPath();
+    let ex=0, ey=0;
+    for (let i=0;i<=last;i++){
+      const th=TH0 + 2*Math.PI*(i/N);
+      const rr=rho(th,r);
+      const X=cx + rr*Math.cos(th)*scale, Y=cy - rr*Math.sin(th)*scale;
+      if (i===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y);
+      ex=X; ey=Y;
     }
-    const irr = 1/r;
-    for (let py=0; py<H; py++){
-      const y=(cy-py)*inv, by2=b*y*y, ay=a*y;
-      let o=py*W*4;
-      for (let px=0; px<W; px++, o+=4){
-        const x=(px-cx)*inv;
-        const axv = x<0 ? -x : x;
-        const v = x*x - ay*axv + by2;
-        if (v <= r){
-          let idx=((r-v)*irr*9)|0; if(idx>8)idx=8; else if(idx<0)idx=0;
-          const col=blended[idx];
-          pdata[o]=col[0]; pdata[o+1]=col[1]; pdata[o+2]=col[2]; pdata[o+3]=255;
-        } else {
-          pdata[o+3]=0;               // transparent -> grid shows through
-        }
-      }
+    ctx.stroke();
+    // leading "pen" while still drawing
+    if (progress < 1){
+      ctx.shadowBlur=14; ctx.shadowColor="rgba(190,220,245,0.9)";
+      ctx.fillStyle="#dbeaf6";
+      ctx.beginPath(); ctx.arc(ex,ey,3.4,0,7); ctx.fill();
     }
-    ctx.putImageData(pimg, 0, 0);
+    ctx.shadowBlur=0;
   }
 
   // ---- timeline ----------------------------------------------------------
-  const P1=0.4, P2=2.0, P3=3.1, P4=5.9;
-  let revealStart=0, interactive=false, rafId=0, clock=0;
-
+  let revealStart=0, interactive=false, rafId=0;
   function frame(now){
     const t=(now-revealStart)/1000;
-    clock=now;
-    let a, b, warmth, baseR;
-
+    let progress, warmth, baseR;
     if (!interactive){
-      if (t < P1){ b=0; a=0; }
-      else if (t < P2){ b=ease((t-P1)/(P2-P1)); a=0; }
-      else if (t < P3){ b=1; a=0; }
-      else if (t < P4){ b=1; a=ease((t-P3)/(P4-P3)); }
-      else { b=1; a=1; }
-      warmth = smoothstep(0.18,0.96,a);
-      baseR = R;
-      if (t > P4 + 1.0){
-        interactive = true;
-        controls.classList.add("show");
-        rSlider.value = R; rValEl.textContent = R;
+      if (t < TRACE){ progress=ease(t/TRACE); warmth=0; }
+      else {
+        progress=1; warmth=smoothstep(0,1,(t-TRACE)/WARM);
+        if (t > TRACE+WARM+0.3){ interactive=true; controls.classList.add("show");
+          rSlider.value=R; rValEl.textContent=R; }
       }
-    } else {
-      a=1; b=1; warmth=1;
-      baseR = +rSlider.value;
-    }
+      baseR=R;
+    } else { progress=1; warmth=1; baseR=+rSlider.value; }
 
-    // gentle heartbeat once warm
-    let r = baseR;
-    if (interactive || t >= P4){
-      const p = ((now/1000) % 1.15) / 1.15;
-      r = baseR * (1 + 0.05 * beat(p));
-    }
+    let r=baseR;
+    if (t > TRACE+WARM){ const p=((now/1000)%1.15)/1.15; r=baseR*(1+0.05*beat(p)); }
 
-    draw(a, b, warmth, r);
+    drawCurve(progress, warmth, r);
 
-    eqWrap.style.color = `rgb(${111+144*warmth},${168-40*warmth},${199-20*warmth})`;
-    eqWrap.style.opacity = (1 - 0.55*warmth).toFixed(3);
-    gridCv.style.opacity = (1 - 0.45*warmth).toFixed(3);
-    const glow = 70*warmth;
-    cv.style.boxShadow = `0 0 ${glow}px ${glow*0.4}px rgba(255,70,110,${0.5*warmth})`;
+    eqWrap.style.color=`rgb(${111+144*warmth},${168-40*warmth},${199-20*warmth})`;
+    eqWrap.style.opacity=(1-0.5*warmth).toFixed(3);
+    gridCv.style.opacity=(1-0.4*warmth).toFixed(3);
 
-    rafId = requestAnimationFrame(frame);
+    rafId=requestAnimationFrame(frame);
   }
 
   // ---- equation typing ---------------------------------------------------
-  const EQ = "x² − a·|x|·y + b·y² − r ≤ 0";
+  const EQ = "x² − |x|·y + y² = r";
   let typed=0, typeTimer=0;
   function type(){
-    eqEl.textContent = EQ.slice(0, typed);
-    if (typed < EQ.length){ typed++; typeTimer=setTimeout(type, 62); }
-    else { typeTimer=setTimeout(startReveal, 800); }
+    eqEl.textContent=EQ.slice(0,typed);
+    if (typed<EQ.length){ typed++; typeTimer=setTimeout(type,68); }
+    else { typeTimer=setTimeout(startReveal,800); }
   }
-  function startReveal(){
-    cursorEl.style.display="none";
-    revealStart=performance.now();
-    rafId=requestAnimationFrame(frame);
-  }
+  function startReveal(){ cursorEl.style.display="none"; revealStart=performance.now(); rafId=requestAnimationFrame(frame); }
   function reset(){
     cancelAnimationFrame(rafId); clearTimeout(typeTimer);
     interactive=false; controls.classList.remove("show");
-    cursorEl.style.display=""; cv.style.boxShadow="0 0 0 rgba(0,0,0,0)";
-    gridCv.style.opacity="1"; eqWrap.style.color=""; eqWrap.style.opacity="1";
-    // clear plot
-    for (let i=3;i<pdata.length;i+=4) pdata[i]=0;
-    ctx.putImageData(pimg,0,0);
-    typed=0; typeTimer=setTimeout(type, 450);
+    cursorEl.style.display=""; gridCv.style.opacity="1";
+    eqWrap.style.color=""; eqWrap.style.opacity="1";
+    ctx.clearRect(0,0,W,H);
+    typed=0; typeTimer=setTimeout(type,450);
   }
 
   rSlider.addEventListener("input", () => {
@@ -274,8 +215,7 @@
 
   // go
   drawGrid();
-  ctx.putImageData(pimg, 0, 0);
-  typeTimer = setTimeout(type, 700);
+  typeTimer=setTimeout(type,700);
 })();
 </script>
 </body>
